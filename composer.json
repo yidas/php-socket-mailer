@@ -1,0 +1,18 @@
+{
+    "name": "yidas/socket-mailer",
+    "description": "PHP SMTP Mailer library using fsockopen.",
+    "keywords": ["PHP", "Mailer", "SMTP", "Socket", "fsockopen"],
+    "homepage": "https://github.com/yidas/php-socket-mailer",
+    "type": "library",
+    "license": "MIT",
+    "support": {
+        "issues": "https://github.com/yidas/php-socket-mailer/issues",
+        "source": "https://github.com/yidas/php-socket-mailer"
+    },
+    "minimum-stability": "stable",
+    "autoload": {
+        "psr-4": {
+            "yidas\\socketMailer\\": "src"
+        }
+    }
+}
