@@ -12,6 +12,13 @@ use Exception;
  */
 class Mailer implements MailerInterface
 {
+    /**
+     * SMTP line break constant.
+     *
+     * @var string
+     */
+    const LB = "\r\n";
+    
     // Transport setting
     public $transport = [];
     
@@ -31,6 +38,8 @@ class Mailer implements MailerInterface
     protected $body;
 
     protected $headers;
+
+    protected $charset = 'utf-8';
 
     /**
      * Debug log text
@@ -196,6 +205,7 @@ class Mailer implements MailerInterface
         
         try {
             
+            // SSL/TLS
             $protocol = ($this->transport['encryption']==='ssl') ? "ssl://" : '';
 
             if (!($socket = fsockopen($protocol . $this->transport['host'], $this->transport['port'], $errno, $errstr, 15))) {
@@ -205,34 +215,44 @@ class Mailer implements MailerInterface
 
             $this->_server_parse($socket, '220');
             
-            $this->_socket_send($socket, 'EHLO '.$this->transport['host']."\r\n");
+            $this->_socket_send($socket, 'EHLO '.$this->transport['host']);
             $this->_server_parse($socket, '250');
 
-            // TLS Encryption
+            // STARTTLS 
             if ($this->transport['encryption']==='tls') {
 
-                $this->_socket_send($socket, 'STARTTLS'."\r\n");
+                $this->_socket_send($socket, 'STARTTLS');
                 $this->_server_parse($socket, '220');
 
-                if(false == stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)){
+                // compatibility of TLS version
+                $crypto_method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+                if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+                    $crypto_method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+                    $crypto_method |= STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+                }
+                if (defined('STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT')) {
+                    $crypto_method |= STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
+                }
+
+                if(false == stream_socket_enable_crypto($socket, true, $crypto_method)){
                     
                     throw new Exception('Unable to start tls encryption', 500);
                 }
 
-                $this->_socket_send($socket, 'EHLO '.$this->transport['host']."\r\n");
+                $this->_socket_send($socket, 'EHLO '.$this->transport['host']);
                 $this->_server_parse($socket, '250');
             }
 
             // AUTH LOGIN flow while auth info is set
             if ($this->transport['username'] && $this->transport['password']) {
 
-                $this->_socket_send($socket, 'AUTH LOGIN'."\r\n");
+                $this->_socket_send($socket, 'AUTH LOGIN');
                 $this->_server_parse($socket, '334');
             
-                $this->_socket_send($socket, base64_encode($this->transport['username'])."\r\n");
+                $this->_socket_send($socket, base64_encode($this->transport['username']), true);
                 $this->_server_parse($socket, '334');
             
-                $this->_socket_send($socket, base64_encode($this->transport['password'])."\r\n");
+                $this->_socket_send($socket, base64_encode($this->transport['password']), true);
                 $this->_server_parse($socket, '235');
             }
 
@@ -261,7 +281,7 @@ class Mailer implements MailerInterface
                 }
             }
             // Socket MAIL FROM (Single sender)
-            $this->_socket_send($socket, "MAIL FROM:<{$fromEmail}>\r\n");
+            $this->_socket_send($socket, "MAIL FROM:<{$fromEmail}>");
             $this->_server_parse($socket, '250');
 
 
@@ -280,37 +300,46 @@ class Mailer implements MailerInterface
                 $toText .= is_string($key) ? "{$value} <{$email}>" : "<{$email}>";
 
                 // Socket RCPT TO
-                $this->_socket_send($socket, "RCPT TO:<{$email}>\r\n");
+                $this->_socket_send($socket, "RCPT TO:<{$email}>");
                 $this->_server_parse($socket, '250');
             }
             
             // Essential headers
             // $this->addHeader('Subject', $this->subject);
-            $this->addHeader('Subject', "=?UTF-8?B?".base64_encode($this->subject)."?=");
+            $this->addHeader('Subject', "=?{$this->charset}?B?".base64_encode($this->subject)."?=");
             $this->addHeader('To', $toText);
             $this->addHeader('From', $fromText);
 
+            // Message-ID
+            $timestamp = floor(microtime(true) * 1000);
+            $senderDomain = explode('@', $fromEmail);
+            $senderDomain = isset($senderDomain[1]) ? $senderDomain[1] : $this->transport['host'];
+            $messageId = md5($fromEmail . $timestamp) . $timestamp . "@{$senderDomain}";
+            $messageId = "<{$messageId}>";
+
+            $this->_socket_send($socket, 'DATA');
+            $this->_server_parse($socket, '354');
+
             // Header Text
-            $headerText = '';
+            $this->headers = array_merge($this->headers, [
+                'Date' => date("c"),
+                'MIME-Version' => "1.0",
+                'Message-ID' => $messageId,
+                'Content-Transfer-Encoding' => '8bit',
+                'Content-Type' => "text/html; charset={$this->charset}",
+            ]);
             foreach ($this->headers as $key => $value) {
 
-                $headerText .= "{$key}: {$value}\r\n";
+                $headerText = "{$key}: {$value}";
+                $this->_socket_send($socket, $headerText);
             }
-            // Postfix Headers
-            $headerText .= "MIME-Version: 1.0\r\n"
-                ."Content-Type: text/html; charset=utf-8\r\n"
-                ."Content-Transfer-Encoding: 8bit\r\n\r\n";
 
-            $this->_socket_send($socket, 'DATA'."\r\n");
-            $this->_server_parse($socket, '354');
+            $this->_socket_send($socket, "{$this->body}");
         
-            $this->_socket_send($socket, "{$headerText}{$this->body}\r\n");
-            // echo "{$headerText}\r\n\r\n{$this->body}\r\n";exit;
-        
-            $this->_socket_send($socket, '.'."\r\n");
+            $this->_socket_send($socket, '.');
             $this->_server_parse($socket, '250');
         
-            $this->_socket_send($socket, 'QUIT'."\r\n");
+            $this->_socket_send($socket, 'QUIT');
             fclose($socket);
             
         } catch (\Exception $e) {
@@ -333,17 +362,18 @@ class Mailer implements MailerInterface
         // Debug Mode 2
         if ($this->debugMode === 2) {
 
-            return $this->logText;
+            echo $this->logText;
         }
 
         return true;
     }
 
-    protected function _socket_send($socket, $message)
+    protected function _socket_send($socket, $message, $hideLog=false)
     {
-        $this->logText .= date("Y-m-d h:i:s") . ' CLIENT -> SERVER: ' . $message;
+        fwrite($socket, $message . static::LB);
 
-        fwrite($socket, $message);
+        $message = $hideLog ? '[credentials hidden]' : trim($message);
+        $this->logText .= date("Y-m-d h:i:s") . ' CLIENT -> SERVER: ' . $message . "\n";
     }
 
     /**
@@ -353,7 +383,7 @@ class Mailer implements MailerInterface
      * @param string $expectedResponse
      * @return void
      */
-    protected function _server_parse($socket, $expectedResponse)
+    protected function _server_parse($socket, $expectedResponse, $hideLog=false)
     {
         $serverResponse = '';
 
@@ -364,7 +394,8 @@ class Mailer implements MailerInterface
                 throw new Exception('Error while fetching server response codes.'. __FILE__. __LINE__, 500);
             }         
             
-            $this->logText .= date("Y-m-d h:i:s") . ' SERVER -> CLIENT: ' . trim($serverResponse) . "\n";
+            $serverResponse = $hideLog ? '[credentials hidden]' : trim($serverResponse);
+            $this->logText .= date("Y-m-d h:i:s") . ' SERVER -> CLIENT: ' . $serverResponse . "\n";
         }
      
         if (!(substr($serverResponse, 0, 3) == $expectedResponse)) {
