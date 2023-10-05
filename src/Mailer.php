@@ -8,7 +8,7 @@ use Exception;
  * Socket Mailer
  * 
  * @author  Nick Tsai <myintaer@gmail.com>
- * @version 1.0.0
+ * @version 1.1.0
  */
 class Mailer implements MailerInterface
 {
