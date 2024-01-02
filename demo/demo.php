@@ -3,6 +3,9 @@
 error_reporting(E_ALL);
 ini_set("display_errors", 1);
 
+# CLI only
+(PHP_SAPI !== 'cli' || isset($_SERVER['HTTP_USER_AGENT'])) && die('CLI only');
+
 require __DIR__ . '/../vendor/autoload.php';
 
 $mailer = new \yidas\socketMailer\Mailer([
