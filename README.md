@@ -59,7 +59,13 @@ use \yidas\socketMailer\Mailer;
 CONFIGURATION
 -------------
 
-To configure a relay mail server:
+To use localhost MTA:
+
+```php
+$mailer = new \yidas\socketMailer\Mailer()
+```
+
+To configure a external MTA server:
 
 ```php
 $mailer = new \yidas\socketMailer\Mailer([
